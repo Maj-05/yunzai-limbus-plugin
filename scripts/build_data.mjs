@@ -269,24 +269,51 @@ export async function buildAll (upstreamDir, outDir) {
     const st = abnById.get(e.id)
     if (!st) continue
     e.resist = (st.resistInfo?.atkResistList || []).map(r => ({ type: r.type, value: r.value }))
-    e.skills = (st.skillList || []).slice(0, 8).map(sid => ({ skillId: sid, sin: null }))
+    // 技能：上游 unit/part/enemy 均用 attributeList[{skillId,number}]（旧 skillList 字段已移除）
+    e.skills = (st.attributeList || []).slice(0, 8).map(a => ({ skillId: a.skillId, sin: null }))
+    // 异常体本体（unit）无 resistInfo，抗性在其部位（abnormalityPart）上，取首个部位的抗性兜底
+    if (!e.resist.length && st.abnormalityPartList?.length) {
+      const part = abnById.get(st.abnormalityPartList[0])
+      if (part?.resistInfo?.atkResistList?.length) {
+        e.resist = part.resistInfo.atkResistList.map(r => ({ type: r.type, value: r.value }))
+      }
+    }
   }
 
   // ===== 饰品（镜牢 EGO gift）=====
-  // 以 CN 文本表为全量主源（EGOgift_MirrorDungeon.json ~360 条），SD 仅补稀有度
+  // 以 CN 文本表为全量主源：自动枚举全部 EGOgift*.json 文本表
+  // （含 MirrorDungeon 主表 + _2/6/7、EventTheme/StoryTheme 主题、walpu 瓦夜、活动等，上游拆分/新增都能扫到），
+  // SD 仅补稀有度。
   const egogifts = []
-  const giftText = list(readJson(path.join(CN, 'EGOgift_MirrorDungeon.json')))
-  const giftText2 = list(readJson(path.join(CN, 'EGOgift_MirrorDungeon_2.json')))
+  const giftFiles = listDir(CN).filter(f => /^EGOgift/i.test(f) && f.endsWith('.json'))
   const giftMap = new Map()
-  for (const g of [...giftText2, ...giftText]) giftMap.set(g.id, g) // _2 优先
+  // 倒序合并：数值主表 _7/_2 等赛季后缀表优先覆盖（同 id 升级变体靠后）
+  for (const f of giftFiles.sort()) {
+    for (const g of list(readJson(path.join(CN, f)))) {
+      if (g.id != null) giftMap.set(g.id, g)
+    }
+  }
   // 饰品稀有度：自动发现饰品数据目录（ego-gift-mirrordungeon / ego-gift 等，上游改名也能扫到），
-// 合并目录下全部 *.json（含 2/3/4/5/6/7/extreme 等赛季饰品），避免饰品级别全为 1。
+  // 合并目录下全部 *.json（含 2/3/4/5/6/7/extreme 等赛季饰品），避免饰品级别全为 1。
+  // 上游用 tag 字段标稀有度（TIER_1..TIER_5, TIER_EX），非旧 rarity 数值。
   const giftRarity = new Map()
   const giftDirs = findDirs(SD, /gift/i)
   for (const dir of giftDirs) {
     for (const f of listDir(dir).filter(x => /^ego-gift-.+\.json$/.test(x))) {
       for (const g of list(readJson(path.join(dir, f)))) {
-        if (g.id != null) giftRarity.set(g.id, g.rarity ?? 0)
+        if (g.id == null) continue
+        // 旧格式 rarity 数字优先；新格式从 tag 提取 TIER_*
+        const r = (g.rarity != null) ? g.rarity : 0
+        let tier = -1
+        if (g.rarity == null && Array.isArray(g.tag)) {
+          for (const t of g.tag) {
+            if (t === 'TIER_EX') { tier = 5; break }
+            const m = /^TIER_(\d)$/.exec(t || '')
+            if (m) { tier = Number(m[1]) - 1; break }
+          }
+        }
+        if (tier >= 0) giftRarity.set(g.id, tier)
+        else if (g.rarity != null) giftRarity.set(g.id, r)
       }
     }
   }
@@ -364,8 +391,11 @@ export async function buildAll (upstreamDir, outDir) {
   if (!enemies.length) diag.push('敌人为空（缺 LocalizeLimbusCompany/Enemies.json）')
   const enemiesNoResist = enemies.filter(e => !(e.resist || []).length).length
   if (enemiesNoResist === enemies.length) diag.push('敌人抗性全空（缺 LimbusStaticData/abnormality-unit 数值源）')
-  const enemiesNoSkill = enemies.filter(e => !(e.skills || []).length).length
-  if (enemiesNoSkill > 0) diag.push(`${enemiesNoSkill}/${enemies.length} 敌人无技能数据（缺 abnormality-unit 数值源）`)
+  // 无技能统计：部位（part）是异常体的可破坏身体部件，本来就不带独立技能，不计入缺失；
+  // 只统计本体/人类类无技能，那才代表上游数值确实缺。
+  const enemiesNoSkill = enemies.filter(e => e.type !== 'part' && !(e.skills || []).length).length
+  const noSkillNonPart = enemies.filter(e => e.type !== 'part')
+  if (enemiesNoSkill > 0) diag.push(`${enemiesNoSkill}/${noSkillNonPart.length} 本体/人类敌人无技能数据（缺 abnormality-unit 数值源）`)
   const giftRarityZero = egogifts.filter(g => (g.rarity ?? 0) === 0).length
   if (giftRarityZero === egogifts.length && egogifts.length) diag.push('饰品级别全为1（缺 LimbusStaticData/ego-gift-mirrordungeon 稀有度数据）')
   if (!Object.keys(skills).length) diag.push('技能文本为空（缺 LocalizeLimbusCompany/Skills*.json）')
