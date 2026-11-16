@@ -10,7 +10,7 @@ const execAsync = promisify(exec)
 
 /**
  * 数据更新 + 插件自更新
- *  #limbus更新        → 插件自更新（git pull 拉最新代码+内置数据）+ 重建图鉴数据
+ *  #limbus更新        → 插件自更新（git pull 仅更新本插件目录，安全；失败只提示不覆盖）+ 重建图鉴数据
  *  #limbus更新数据    → 仅重建图鉴数据（需要 data/upstream 已存在）
  *  #图鉴状态          → 数据统计
  */
@@ -134,11 +134,16 @@ export class LimbusUpdate extends plugin {
     this._running = true
     const onlyData = this.e.msg.includes('数据')
     try {
-      // ============ 阶段1：插件自更新（git pull，失败兜底全量覆盖）============
+      // ============ 阶段1：插件自更新（git pull，仅更新本插件目录，失败不覆盖）============
       if (!onlyData) {
         await this.reply('①/② 正在拉取插件最新代码…')
         let updated = false
-        if (this._isGitRepo()) {
+        // 安全护栏：确认 PLUGIN_ROOT 确实是插件自身目录（含 apps/ 与 package.json），
+        // 避免 PLUGIN_ROOT 解析偏差时对 Yunzai 插件根等父目录误执行 git/覆盖。
+        const isPluginRoot = fs.existsSync(path.join(PLUGIN_ROOT, 'apps')) && fs.existsSync(path.join(PLUGIN_ROOT, 'package.json'))
+        if (!isPluginRoot) {
+          await this.reply(`⚠ 插件目录校验失败（PLUGIN_ROOT=${PLUGIN_ROOT}），已中止插件自更新，仅执行数据更新。`)
+        } else if (this._isGitRepo()) {
           const isForce = this.e.msg.includes('强制')
           const oldCommit = await this._execGit('rev-parse --short HEAD')
           let cmd = isForce
@@ -157,9 +162,8 @@ export class LimbusUpdate extends plugin {
             await this.reply('插件代码已是最新')
             updated = true
           } else if (/fatal|error|Could not|Failed to connect/i.test(stdout)) {
-            // git 更新失败 → 兜底全量覆盖，保证完整更新
-            updated = await this._cloneCopyUpdate()
-            if (!updated) await this.reply(`git 更新失败，改用全量覆盖也失败:\n${stdout.trim().slice(0, 300)}`)
+            // 安全：git 更新失败不做全量覆盖（避免误覆盖插件或 Yunzai 目录），只提示用户
+            await this.reply(`插件 git 更新失败:\n${stdout.trim().slice(0, 300)}\n可执行「#limbus强制更新」或改用 Yunzai 的「更新插件」功能。`)
           } else {
             await this.reply(`代码已更新（${isForce ? '强制' : '常规'}）\n${stdout.trim().split('\n').slice(-6).join('\n').slice(0, 400)}`)
             const log = await this._gitLog(oldCommit)
@@ -167,12 +171,13 @@ export class LimbusUpdate extends plugin {
             updated = true
           }
         } else {
-          // 第三方面板安装（无 .git）：全量 clone 覆盖
-          updated = await this._cloneCopyUpdate()
+          // 第三方面板安装（无 .git）：不自更新，提示走 Yunzai 更新机制
+          updated = false
+          await this.reply('插件目录不是 git 仓库，无法自更新。\n请改用 Yunzai 的「更新插件」功能，或重新安装插件。')
         }
         if (!updated) {
-          // git 与全量覆盖都失败，提示用户
-          await this.reply('插件自更新未完成（网络或 git 问题），可改用 Yunzai 的「更新全部插件」。\n不影响下方数据更新。')
+          // 插件代码未更新（网络/git/非仓库），提示用户，不影响下方数据更新
+          await this.reply('插件代码自更新未完成（网络或 git 问题），可改用 Yunzai 的「更新插件」功能。\n不影响下方数据更新。')
         }
       } else {
         await this.reply('①/② 跳过插件自更新（仅更新数据）')
@@ -231,37 +236,6 @@ export class LimbusUpdate extends plugin {
       this._running = false
     }
     return true
-  }
-
-  /** 全量覆盖更新：git clone 最新代码到临时目录并覆盖本插件（保留 data/upstream、resources/art、node_modules） */
-  async _cloneCopyUpdate () {
-    const tmp = path.join(PLUGIN_ROOT, '..', `.limbus-update-${Date.now()}`)
-    try {
-      fs.rmSync(tmp, { recursive: true, force: true })
-      await execAsync(`git clone --depth 1 ${ghMirrorOf(REPO_URL)} "${tmp}"`, { timeout: 300000, windowsHide: true })
-      for (const item of fs.readdirSync(tmp)) {
-        if (['data', 'resources', 'node_modules', '.git'].includes(item)) continue
-        const src = path.join(tmp, item)
-        const dst = path.join(PLUGIN_ROOT, item)
-        fs.rmSync(dst, { recursive: true, force: true })
-        fs.cpSync(src, dst, { recursive: true })
-      }
-      for (const sub of ['common', 'personality', 'ego', 'enemy', 'gift', 'search', 'help', 'data']) {
-        const rsrc = path.join(PLUGIN_ROOT, 'resources', sub)
-        const rtmp = path.join(tmp, 'resources', sub)
-        if (fs.existsSync(rtmp)) {
-          fs.rmSync(rsrc, { recursive: true, force: true })
-          fs.cpSync(rtmp, rsrc, { recursive: true })
-        }
-      }
-      fs.rmSync(tmp, { recursive: true, force: true })
-      await this.reply('代码已更新（全量覆盖完成）')
-      return true
-    } catch (e) {
-      logger.error(`[limbus-plugin] 全量覆盖更新失败: ${e.message}`)
-      fs.rmSync(tmp, { recursive: true, force: true })
-      return false
-    }
   }
 
   _execGit (args) {
