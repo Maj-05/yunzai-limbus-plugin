@@ -1,6 +1,8 @@
 {
   "ghMirror": "",
   "note": "GitHub 代理前缀。若服务器无法直连 github.com（国内常见），可填镜像地址（以 / 结尾），如 https://ghfast.top/ 或 https://ghproxy.net/。留空则直连。",
+  "httpProxy": "",
+  "httpProxyNote": "通用 git 代理（git pull/clone 时带上，解决 git.neonteam.dev / github.com 直连慢或失败导致的上游数据缺失）。如本机代理 http://127.0.0.1:26561。留空则直连。",
   "example": {
     "ghMirror": "https://ghfast.top/",
     "upstreams": {

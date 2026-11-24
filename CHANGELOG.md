@@ -8,6 +8,9 @@
 - 适配上游数据改版：敌人技能字段 skillList→attributeList 并补部位抗性；
   饰品文本表自动枚举全部 EGOgift*.json（含瓦夜 walpu/主题/活动）+ tag 稀有度；
   全量重建数据，新增瓦夜饰品（egogifts 382→805）。
+- 优化：拉取上游数据支持通用 git 代理（config/system/update.json 的 httpProxy），
+  国内服务器配代理即可稳定拉取 git.neonteam.dev / github.com 上游，补齐缺失数据。
+- 修正：README 饰品统计 634→805；gift_flow 过时注释更新。
 
 ## v1.5.0
 

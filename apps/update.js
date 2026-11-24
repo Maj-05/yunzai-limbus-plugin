@@ -48,6 +48,22 @@ function getUpstreams () {
   })
 }
 
+/** 可选通用 git 代理（config/system/update.json 的 httpProxy，如 http://127.0.0.1:26561）。
+ *  拉取上游时带上，让国内服务器也能拉 git.neonteam.dev / github.com 的上游数据。
+ *  返回 git 的 -c 参数数组（未配置则空数组）。 */
+function gitProxyArgs () {
+  const cfg = loadUpdateConfig()
+  const proxy = (cfg.httpProxy || '').trim()
+  if (!proxy) return []
+  return [
+    '-c', 'http.proxy=' + proxy,
+    '-c', 'http.sslBackend=openssl',
+    '-c', 'http.sslVerify=false',
+    '-c', 'http.lowSpeedLimit=1000',
+    '-c', 'http.lowSpeedTime=600'
+  ]
+}
+
 export class LimbusUpdate extends plugin {
   constructor() {
     super({
@@ -187,14 +203,16 @@ export class LimbusUpdate extends plugin {
       const upstreamDir = path.join(PLUGIN_ROOT, 'data', 'upstream')
       fs.mkdirSync(upstreamDir, { recursive: true })
       await this.reply('②/② 正在拉取上游数据源（1-3 分钟）…')
+      const gargs = gitProxyArgs() // 可选代理 -c 参数（未配置 httpProxy 为空数组）
+      const gpre = gargs.length ? gargs.join(' ') + ' ' : ''
       for (const u of getUpstreams()) {
         const dest = path.join(upstreamDir, u.name)
         try {
           if (fs.existsSync(path.join(dest, '.git'))) {
-            await execAsync('git pull --ff-only', { cwd: dest, timeout: 180000, windowsHide: true })
+            await execAsync(`git ${gpre}pull --ff-only`, { cwd: dest, timeout: 180000, windowsHide: true })
           } else {
             fs.rmSync(dest, { recursive: true, force: true })
-            await execAsync(`git clone --depth 1 ${u.url} "${dest}"`, { timeout: 600000, windowsHide: true })
+            await execAsync(`git ${gpre}clone --depth 1 ${u.url} "${dest}"`, { timeout: 600000, windowsHide: true })
           }
         } catch (e) {
           // 单个源失败不中断整个更新（如国内服务器连不上 GitHub）
