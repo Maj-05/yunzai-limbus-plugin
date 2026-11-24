@@ -163,7 +163,7 @@ export class LimbusUpdate extends plugin {
           const isForce = this.e.msg.includes('强制')
           const oldCommit = await this._execGit('rev-parse --short HEAD')
           let cmd = isForce
-            ? 'git -C "' + PLUGIN_ROOT + '" fetch --all && git -C "' + PLUGIN_ROOT + '" reset --hard HEAD'
+            ? 'git -C "' + PLUGIN_ROOT + '" fetch --all && git -C "' + PLUGIN_ROOT + '" reset --hard @{upstream}'
             : 'git -C "' + PLUGIN_ROOT + '" pull --no-rebase'
           let ret = await execAsync(cmd, { timeout: 180000, windowsHide: true }).catch(err => ({ stdout: '', stderr: err.message }))
           // 直连失败则走 ghMirror 代理重试
