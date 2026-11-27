@@ -5,9 +5,9 @@
 {{/block}}
 
 {{block 'main'}}
-{{if card.showArt}}
+{{if card.art.normal}}
 <div class="art-banner">
-  <img class="art-img" src="{{pluResPath}}art/{{card.art.normal}}" onerror="this.onerror=null;this.style.display='none';" />
+  <img class="art-img" src="{{card.art.normalLocal ? (pluResPath + 'art/' + card.art.normal) : card.art.normal}}" onerror="this.onerror=null;this.style.display='none';" />
   <div class="art-overlay">
     <div class="title">{{card.name}}</div>
     <div class="label">

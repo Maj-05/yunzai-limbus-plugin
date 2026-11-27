@@ -26,7 +26,7 @@ test('offline rebuild keeps bundled data and source date, supplements coin descr
   const root = fixture(t), out = path.join(root, 'data'), ref = path.join(root, 'ref')
   publishSnapshot(out, data())
   fs.mkdirSync(path.join(ref, 'CN'), { recursive: true })
-  fs.writeFileSync(path.join(ref, 'CN', 'Skills.json'), JSON.stringify({ dataList: [{ id: 1, levelList: [{ level: 1, name: '技能' }, { level: 4, name: '技能', coinlist: [{ coindescs: [{ desc: '命中附加沉沦' }] }] }] }] }))
+  fs.writeFileSync(path.join(ref, 'CN', 'Skills.json'), '\uFEFF' + JSON.stringify({ dataList: [{ id: 1, levelList: [{ level: 1, name: '技能' }, { level: 4, name: '技能', coinlist: [{ coindescs: [{ desc: '命中附加沉沦' }] }] }] }] }))
   const result = await buildAll(path.join(root, 'missing'), out, { localRefDir: ref })
   assert.equal(result.local, true)
   assert.match(JSON.parse(fs.readFileSync(path.join(out, 'skills.json')))[1].desc, /沉沦/)

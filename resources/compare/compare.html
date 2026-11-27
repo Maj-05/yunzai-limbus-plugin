@@ -13,8 +13,8 @@
   {{each pair col}}
   <div class="cmp-col">
     <div class="cmp-art" style="background:{{col.card.rankColor}}">
-      {{if col.card.showArt}}
-      <img class="cmp-img" src="{{pluResPath}}art/{{col.card.art.normal}}" onerror="this.style.display='none';"/>
+      {{if col.card.art.normal}}
+      <img class="cmp-img" src="{{col.card.art.normalLocal ? (pluResPath + 'art/' + col.card.art.normal) : col.card.art.normal}}" onerror="this.style.display='none';"/>
       {{/if}}
       <div class="cmp-overlay">
         <div class="cmp-name">{{col.card.name}}</div>

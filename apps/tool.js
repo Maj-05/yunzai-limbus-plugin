@@ -1,7 +1,7 @@
 import { rulePrefix } from '../utils/common.js'
 import runtimeRender from '../utils/runtimeRender.js'
 import db from '../lib/db.mjs'
-import { buildPersonalityCard, buildEgoCard, buildEnemyCard, artUrl } from '../lib/cards.mjs'
+import { buildPersonalityCard, buildEgoCard, buildEnemyCard, normalPortraitUrl, artLocal, artUrl } from '../lib/cards.mjs'
 import { readData, SINNER_NAMES } from '../lib/constants.mjs'
 import { rememberSelect, clearSelect, selectionKey } from '../lib/selection.mjs'
 import { buildGalleryPage, buildGalleryRandom } from '../lib/gallery.mjs'
@@ -408,16 +408,19 @@ export class LimbusTool extends plugin {
       if (r.kind === 'shard') {
         // 碎片卡：贴上该罪人初始人格立绘（shardCharId → 该罪人 rank 最低=初始人格），无本地图走热链
         let shardArt = ''
+        let local = ''
         if (r.shardCharId) {
           const sins = db.personalitiesOfSinner(r.shardCharId)
           if (sins.length) {
             const base = sins.reduce((a, b) => (b.id < a.id ? b : a))
-            shardArt = artUrl(base.id, 'normal')
+            local = artLocal(base.id)
+            shardArt = local || normalPortraitUrl(base.id)
           }
         }
-        return { art: shardArt, name: r.name || '人格碎片', rarityName: '碎片', rarityColor: '#a8a8a8', isRare: false, isShard: true }
+        return { art: shardArt, artLocal: !!local, name: r.name || '人格碎片', rarityName: '碎片', rarityColor: '#a8a8a8', isRare: false, isShard: true }
       }
-      const art = r.kind === 'ego' ? artUrl(r.id, 'awaken_profile') : artUrl(r.id, 'normal')
+      const local = artLocal(r.id, r.kind === 'ego' ? 'awaken_profile' : 'normal')
+      const art = local || (r.kind === 'ego' ? artUrl(r.id, 'awaken_profile') : normalPortraitUrl(r.id))
       const rar = r.kind === 'ego' ? (r.grade || '?') : `${r.rank}灯`
       const SIN_COLOR = { WRATH:'#d8433c', LUST:'#8a5a33', SLOTH:'#e2c23a', GLUTTONY:'#4caf50', GLOOM:'#6fb3e8', PRIDE:'#2b3d8f', ENVY:'#9b5bb8', CRIMSON:'#d8433c', AMBER:'#8a5a33', SCARLET:'#e2c23a', SHAMROCK:'#4caf50', AZURE:'#6fb3e8', INDIGO:'#2b3d8f', VIOLET:'#9b5bb8', NEUTRAL:'#888' }
       let color
@@ -436,7 +439,7 @@ export class LimbusTool extends plugin {
         // 人格边框按灯数（官方：3灯金 #FFD700 / 2灯红 #DC143C / 1灯灰 #A9A9A9）
         color = { 3: '#ffd700', 2: '#dc143c', 1: '#a9a9a9' }[r.rank] || '#a9a9a9'
       }
-      return { art, name: r.name, rarityName: rar, rarityColor: color, isRare: r.rarity <= 2 }
+      return { art, artLocal: !!local, name: r.name, rarityName: rar, rarityColor: color, isRare: r.rarity <= 2 }
     })
     const rare = results.filter(r => r.rarity <= 2).length
     await runtimeRender(this.e, 'search/gacha', { results: cards, rareCount: rare, gachaMulti: n > 1 }, { scale: 1.4 })

@@ -1,3 +1,4 @@
+import { artLocal, normalPortraitUrl } from '../lib/cards.mjs'
 /**
  * 下载人格立绘到 resources/art/（本地缓存）。
  * 数据源：灰机wiki图床（文件名 = {人格id}_normal.png / {id}_gacksung.png）。
@@ -115,14 +116,16 @@ export async function build ({ allowNetwork = false } = {}) {
       const id = p.id
       if (!Number.isSafeInteger(id) || id < 0) throw new Error('立绘 ID 无效')
       for (const kind of src.kinds) {
-        const fn = `${id}_${kind}.png`
-        const target = path.join(OUT_DIR, `${id}_${kind}.png`)
-        if (fs.existsSync(target) && fs.statSync(target).size > 5000) {
-          index[`${id}_${kind}`] = `${id}_${kind}.png`
+        const local = artLocal(id, kind)
+        if (local) {
+          index[`${id}_${kind}`] = local
           existed++
           continue
         }
-        tasks.push({ id, kind, src, fn, target })
+        const png = `${id}_${kind}.png`
+        const url = src.file === DATA && kind === 'normal' ? normalPortraitUrl(id) : `${getArtBase()}${BASE}/${md5Path(png)}`
+        const fn = path.basename(new URL(url).pathname)
+        tasks.push({ id, kind, src, fn, url, target: path.join(OUT_DIR, fn) })
       }
     }
   }
@@ -136,12 +139,14 @@ export async function build ({ allowNetwork = false } = {}) {
     while (cursor < tasks.length) {
       const t = tasks[cursor++]
       try {
-        const url = `${getArtBase()}${BASE}/${md5Path(t.fn)}`
-        const buf = await download(url)
-        if (buf.length < 5000 || !buf.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new Error('无效的 PNG')
+        const buf = await download(t.url)
+        const valid = t.fn.endsWith('.webp')
+          ? buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP'
+          : buf.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
+        if (!valid || buf.length <= 5000) throw new Error('无效的立绘图片')
         const temporary = t.target + '.tmp'
         try { fs.writeFileSync(temporary, buf); fs.renameSync(temporary, t.target) } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary) }
-        index[`${t.id}_${t.kind}`] = `${t.id}_${t.kind}.png`
+        index[`${t.id}_${t.kind}`] = t.fn
         downloaded++
       } catch (e) {
         failed++

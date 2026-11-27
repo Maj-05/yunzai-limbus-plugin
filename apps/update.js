@@ -181,7 +181,11 @@ export class LimbusUpdate extends plugin {
       const args = [path.join(PLUGIN_ROOT, 'scripts', 'build_data.mjs'), upstreamDir, path.join(PLUGIN_ROOT, 'resources', 'data')]
       const env = { ...process.env }
       if (!env.LIMBUS_REF_DIR && cfg.localRefDir) env.LIMBUS_REF_DIR = cfg.localRefDir
-      const built = await execAsync(process.execPath, args, { env, cwd: PLUGIN_ROOT, timeout: 180000, maxBuffer: 1024 * 1024, windowsHide: true })
+      const built = await execAsync(process.execPath, args, { env, cwd: PLUGIN_ROOT, timeout: 180000, maxBuffer: 1024 * 1024, windowsHide: true }).catch(error => {
+        const detail = String(error.stderr || '').trim().split(/\r?\n/).find(line => line.startsWith('build failed:'))
+        if (detail) throw new Error(detail.slice('build failed:'.length).trim())
+        throw error
+      })
       const result = JSON.parse(built.stdout.trim())
       db.ready = false
       if (!db.load()) throw new Error('更新后的数据无法载入')

@@ -25,7 +25,7 @@ const DEF_TYPES = { EVADE: 'EVADE', GUARD: 'GUARD', COUNTER: 'COUNTER' }
 function readJson(p) {
   if (!fs.existsSync(p)) return null
   try {
-    return JSON.parse(fs.readFileSync(p, 'utf8'))
+    return JSON.parse(fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, ''))
   } catch (error) {
     throw new Error(`无法解析本地数据 ${path.basename(p)}: ${error.message}`)
   }

@@ -14,7 +14,7 @@
   {{each items it}}
   <div class="s-card">
     {{if it.artSrc}}
-    <img class="s-art" src="{{it.artLocal ? (pluResPath + 'art/' + it.artSrc) : it.artSrc}}" onerror="this.onerror=null;this.parentNode.style.display='none';" loading="lazy"/>
+    <img class="s-art" src="{{it.artLocal ? (pluResPath + 'art/' + it.artSrc) : it.artSrc}}" onerror="this.onerror=null;this.style.display='none';" loading="lazy"/>
     {{/if}}
     {{if !it.artSrc}}
     <div class="s-art s-art-ph">{{it.rankName}}</div>
