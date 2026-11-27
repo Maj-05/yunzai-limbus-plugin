@@ -47,7 +47,7 @@ Python 层通过 `asyncio.create_subprocess_exec` 启动本地 Node（不经过 
 
 ## 验证与边界
 
-运行 `node --test tests/adapter*.test.mjs`，覆盖本地查询/详情/分页/错误输入、真实 CLI 启动、MCP 握手与工具调用、打包完整性。Python 端可用 `python -m py_compile adapters/astrbot/main.py` 检查语法。
+运行 `npm test`。适配测试覆盖本地查询、详情、分页、错误输入、CLI 启动、MCP 握手与工具调用及打包完整性。Python 端可用 `python -m py_compile adapters/astrbot/main.py` 检查语法。
 
 这些测试不等于真实 AstrBot/DSH 安装验收；实际加载、命令唤醒和平台消息长度限制需要在对应版本宿主里确认。没有自动安装/修改用户现有 DSH、AstrBot 或 MCP 配置。
 
