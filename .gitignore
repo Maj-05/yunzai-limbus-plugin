@@ -3,3 +3,6 @@ data/upstream/
 data/cache/
 *.log
 .DS_Store
+dist/
+__pycache__/
+*.pyc

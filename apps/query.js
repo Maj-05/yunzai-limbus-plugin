@@ -2,8 +2,9 @@ import db from '../lib/db.mjs'
 import { rulePrefix } from '../utils/common.js'
 import runtimeRender from '../utils/runtimeRender.js'
 import { buildEgoCard, buildEnemyCard, buildGiftCard, buildGiftList, buildSinnerEgoList, suggestions } from '../lib/cards.mjs'
-import { rememberSelect, peekSelect, clearSelect, updatePage } from '../lib/selection.mjs'
+import { rememberSelect, peekSelect, clearSelect, updatePage, selectionKey } from '../lib/selection.mjs'
 import { findFlow, buildGiftFlowIndex, listFlows } from '../lib/gift_flow.mjs'
+import { buildGalleryPage } from '../lib/gallery.mjs'
 
 export class LimbusQuery2 extends plugin {
   constructor() {
@@ -15,7 +16,7 @@ export class LimbusQuery2 extends plugin {
       rule: [
         { reg: `^${rulePrefix}(?:ego|EGO|E\\.G\\.O)(?!图鉴)\\s*(.+)$`, fnc: 'queryEgo' },
         { reg: `^${rulePrefix}(?:敌人|abnormality)\\s*(.+)$`, fnc: 'queryEnemy' },
-        { reg: `^${rulePrefix}(?:饰品|egogift)(?:列表|list|全部)\s*(\\d{0,2})$`, fnc: 'giftList' },
+        { reg: `^${rulePrefix}(?:饰品|egogift)(?:列表|list|全部)\\s*(\\d{0,2})$`, fnc: 'giftList' },
         { reg: `^${rulePrefix}(?:饰品|egogift|EGO饰品)\\s*(.+)$`, fnc: 'queryGift' },
         { reg: '^#?[1-8]$', fnc: 'selectNumber' },
         { reg: '^#?(?:下一页|下页)$', fnc: 'turnPage' },
@@ -26,8 +27,8 @@ export class LimbusQuery2 extends plugin {
   }
 
   _strip(msg, kw) {
-    let q = msg.replace(/#|\/|边狱|巴士|084|limbus|Limbus/gi, '').trim()
-    q = q.replace(new RegExp(`^${kw}\\s*`, 'i'), '').trim()
+    let q = msg.replace(new RegExp(`^${rulePrefix}`, 'i'), '').trim()
+    q = q.replace(new RegExp(`^(?:${kw})\\s*`, 'i'), '').trim()
     return q
   }
 
@@ -50,7 +51,7 @@ export class LimbusQuery2 extends plugin {
       const first = kind.get(ids[0])
       const isExact = first?.name && first.name.replace(/\s+/g, '') === q.replace(/\s+/g, '')
       if (!isExact) {
-        rememberSelect(this.e.user_id, { ids, kindName, render: renderFn, tpl: tplPath })
+        rememberSelect(selectionKey(this.e), { ids, kindName, render: renderFn, tpl: tplPath })
         await runtimeRender(this.e, 'search/search', {
           kind: kindName,
           keyword: q,
@@ -74,7 +75,7 @@ export class LimbusQuery2 extends plugin {
     // 尾部匹配 EGO 等级（ZAYIN/TETH/HE/WAW/ALEPH，大小写不限）
     let grade = null
     let q = raw
-    const gm = q.match(/\s*([A-Za-z]{3,6})\s*$/i)
+    const gm = q.match(/\s+(ZAYIN|TETH|HE|WAW|ALEPH)\s*$/i)
     if (gm && /^(ZAYIN|TETH|HE|WAW|ALEPH)$/i.test(gm[1])) {
       grade = gm[1].toUpperCase()
       q = q.slice(0, q.length - gm[0].length).trim()
@@ -108,7 +109,7 @@ export class LimbusQuery2 extends plugin {
       const page = 0
       const totalPages = Math.max(1, Math.ceil(ids.length / PAGE))
       const shown = ids.slice(page * PAGE, page * PAGE + PAGE)
-      rememberSelect(this.e.user_id, { ids, kindName: '敌人', render: buildEnemyCard, tpl: 'enemy/enemy', page, pageSize: PAGE })
+      rememberSelect(selectionKey(this.e), { ids, kindName: '敌人', render: buildEnemyCard, tpl: 'enemy/enemy', page, pageSize: PAGE })
       await runtimeRender(this.e, 'search/search', {
         kind: `敌人·${tkw.label}`,
         keyword: `${tkw.label}（共 ${ids.length} 个，第 ${page + 1}/${totalPages} 页）`,
@@ -180,7 +181,7 @@ export class LimbusQuery2 extends plugin {
     const shown = ids.slice(0, PAGE)
     const textNames = {}
     for (const g of list) textNames[g.id] = g.name
-    rememberSelect(this.e.user_id, { ids, kindName: '饰品', render: buildGiftCard, tpl: 'gift/gift', page, pageSize: PAGE, textNames })
+    rememberSelect(selectionKey(this.e), { ids, kindName: '饰品', render: buildGiftCard, tpl: 'gift/gift', page, pageSize: PAGE, textNames })
     const lines = shown.map((id, i) => `${i + 1}. ${textNames[id]}`)
     const more = ids.length > PAGE ? `\n…等 ${ids.length} 件 · 回复 下一页/上一页/第N页 翻页，序号查看详情` : ''
     await this.reply(`【${flow.name}流饰品】${flow.desc}\n共 ${ids.length} 件（第 ${page + 1}/${totalPages} 页）\n${lines.join('\n')}${more}`)
@@ -215,8 +216,8 @@ export class LimbusQuery2 extends plugin {
     const q = this.e.msg.replace(/#/g, '').trim()
     const n = parseInt(q, 10)
     if (!Number.isInteger(n) || n < 1) return false
-    const sel = peekSelect(this.e.user_id)
-    if (!sel) return false
+    const sel = peekSelect(selectionKey(this.e))
+    if (!sel || sel.mode === 'gallery') return false
     if (!db.load()) return false
     // 分页时序号按当前页偏移选取（ids 已是全量，页内 1-8 对应 page*pageSize+n）
     const pageSize = sel.pageSize || sel.ids.length
@@ -224,8 +225,8 @@ export class LimbusQuery2 extends plugin {
     const id = sel.ids[offset + n - 1]
     if (id == null) { await this.reply('序号超出范围（1-' + Math.min(pageSize, sel.ids.length - offset) + '）'); return true }
     const card = sel.render(id)
-    if (!card) { await this.reply('数据缺失，请联系管理员更新图鉴'); clearSelect(this.e.user_id); return true }
-    clearSelect(this.e.user_id)
+    if (!card) { await this.reply('数据缺失，请联系管理员更新图鉴'); clearSelect(selectionKey(this.e)); return true }
+    clearSelect(selectionKey(this.e))
     await runtimeRender(this.e, sel.tpl, { card }, { scale: 1.4 })
     return true
   }
@@ -234,7 +235,7 @@ export class LimbusQuery2 extends plugin {
   async turnPage() {
     const msg = this.e.msg.replace(/#/g, '').trim()
     if (!db.load()) return false
-    const sel = peekSelect(this.e.user_id)
+    const sel = peekSelect(selectionKey(this.e))
     if (!sel) return false
     const pageSize = sel.pageSize || 8
     const totalPages = Math.max(1, Math.ceil(sel.ids.length / pageSize))
@@ -249,10 +250,16 @@ export class LimbusQuery2 extends plugin {
     }
     if (nextPage < 0) nextPage = 0
     if (nextPage >= totalPages) nextPage = totalPages - 1
-    const page = updatePage(this.e.user_id, () => nextPage)
+    const page = updatePage(selectionKey(this.e), () => nextPage)
     if (page == null) return false
     const shown = sel.ids.slice(page * pageSize, page * pageSize + pageSize)
     if (!shown.length) { await this.reply('该页无内容'); return true }
+    if (sel.mode === 'gallery') {
+      const data = buildGalleryPage(sel.ids, page, sel.kindName)
+      await runtimeRender(this.e, 'gallery/gallery', data, { scale: 1.3 })
+      await this.reply(`画廊第 ${page + 1}/${totalPages} 页 · 下一页/上一页/第N页`)
+      return true
+    }
     // 文本型 selection（#饰品 <流派> 等）：翻页也用文本，保持前后一致
     if (sel.textNames) {
       const lines = shown.map((id, i) => `${i + 1}. ${sel.textNames[id] || id}`)

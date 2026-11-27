@@ -38,43 +38,57 @@ function getArtBase () {
   return 'https://' + HOST
 }
 
-function download (url, timeout = 20000, retries = 2) {
-  return new Promise((resolve, reject) => {
-    const attempt = (n) => {
-      const req = https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0 (limbus-plugin)' } }, (res) => {
-        if (res.statusCode === 301 || res.statusCode === 302) {
-          res.resume()
-          if (res.headers.location) {
-            const req2 = https.get(res.headers.location, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (r2) => {
-              if (r2.statusCode !== 200) { r2.resume(); return reject(new Error('HTTP ' + r2.statusCode)) }
-              const chunks = []
-              r2.on('data', c => chunks.push(c))
-              r2.on('end', () => resolve(Buffer.concat(chunks)))
-            })
-            req2.on('error', reject)
+export async function download (url, { timeout = 20000, maxBytes = 12 * 1024 * 1024, request = https.get } = {}) {
+  const origin = new URL(url)
+  if (origin.protocol !== 'https:' || origin.username || origin.password) throw new Error('图床必须使用无凭据的 HTTPS URL')
+  const deadline = Date.now() + timeout
+  async function get (target, redirects = 0) {
+    if (redirects > 3) throw new Error('重定向次数过多')
+    const next = new URL(target)
+    if (next.origin !== origin.origin) throw new Error('不允许跨域图床重定向')
+    return new Promise((resolve, reject) => {
+      let req, res, settled = false
+      const finish = (error, value) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        if (error) { req?.destroy(); res?.destroy(); reject(error) } else resolve(value)
+      }
+      const timer = setTimeout(() => finish(new Error('下载超时')), Math.max(1, deadline - Date.now()))
+      try {
+        req = request(next, { headers: { 'User-Agent': 'limbus-plugin' } }, response => {
+          res = response
+          res.on('error', error => finish(error))
+          res.on('aborted', () => finish(new Error('下载中断')))
+          if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
+            const location = res.headers.location
+            res.resume()
+            if (!location) return finish(new Error('缺少重定向地址'))
+            let redirect
+            try { redirect = new URL(location, next).href } catch (error) { return finish(error) }
+            get(redirect, redirects + 1).then(value => finish(null, value), error => finish(error))
             return
           }
-          return reject(new Error('redirect-loop'))
-        }
-        if (res.statusCode !== 200) {
-          res.resume()
-          return reject(new Error('HTTP ' + res.statusCode))
-        }
-        const chunks = []
-        res.on('data', c => chunks.push(c))
-        res.on('end', () => resolve(Buffer.concat(chunks)))
-      })
-      req.on('error', (e) => {
-        if (n > 0) setTimeout(() => attempt(n - 1), 500)
-        else reject(e)
-      })
-      req.setTimeout(timeout, () => req.destroy(new Error('timeout')))
-    }
-    attempt(retries)
-  })
+          if (res.statusCode !== 200) return finish(new Error('HTTP ' + res.statusCode))
+          if (Number(res.headers['content-length']) > maxBytes) return finish(new Error('立绘超过大小限制'))
+          let size = 0
+          const chunks = []
+          res.on('data', chunk => {
+            size += chunk.length
+            if (size > maxBytes) return finish(new Error('立绘超过大小限制'))
+            chunks.push(chunk)
+          })
+          res.on('end', () => finish(null, Buffer.concat(chunks)))
+        })
+        req.on('error', error => finish(error))
+      } catch (error) { finish(error) }
+    })
+  }
+  return get(origin.href)
 }
 
-export async function build () {
+export async function build ({ allowNetwork = false } = {}) {
+  if (!allowNetwork) return { downloaded: 0, existed: 0, failed: 0, need: 0, skipped: true }
   fs.mkdirSync(OUT_DIR, { recursive: true })
   const index = {}
   let downloaded = 0
@@ -99,6 +113,7 @@ export async function build () {
     grandTotal += src.total
     for (const p of list) {
       const id = p.id
+      if (!Number.isSafeInteger(id) || id < 0) throw new Error('立绘 ID 无效')
       for (const kind of src.kinds) {
         const fn = `${id}_${kind}.png`
         const target = path.join(OUT_DIR, `${id}_${kind}.png`)
@@ -123,8 +138,9 @@ export async function build () {
       try {
         const url = `${getArtBase()}${BASE}/${md5Path(t.fn)}`
         const buf = await download(url)
-        if (buf.length < 5000) throw new Error('too-small')
-        fs.writeFileSync(t.target, buf)
+        if (buf.length < 5000 || !buf.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new Error('无效的 PNG')
+        const temporary = t.target + '.tmp'
+        try { fs.writeFileSync(temporary, buf); fs.renameSync(temporary, t.target) } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary) }
         index[`${t.id}_${t.kind}`] = `${t.id}_${t.kind}.png`
         downloaded++
       } catch (e) {
@@ -145,7 +161,7 @@ export async function build () {
 }
 
 if (process.argv[1] && process.argv[1].endsWith('fetch_art.mjs')) {
-  build().catch(e => { console.error('[art] 失败:', e.message); process.exit(1) })
+  build({ allowNetwork: process.argv.includes('--allow-network') }).catch(e => { console.error('[art] 失败:', e.message); process.exit(1) })
 }
 
 export { md5Path }

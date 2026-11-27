@@ -8,6 +8,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import os from 'node:os'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PLUGIN_ROOT = path.resolve(__dirname, '..')
@@ -22,10 +23,11 @@ const ATK = { SLASH: 'SLASH', PENETRATE: 'PENETRATE', HIT: 'HIT' }
 const DEF_TYPES = { EVADE: 'EVADE', GUARD: 'GUARD', COUNTER: 'COUNTER' }
 
 function readJson(p) {
+  if (!fs.existsSync(p)) return null
   try {
     return JSON.parse(fs.readFileSync(p, 'utf8'))
-  } catch {
-    return null
+  } catch (error) {
+    throw new Error(`无法解析本地数据 ${path.basename(p)}: ${error.message}`)
   }
 }
 
@@ -86,12 +88,70 @@ function textMap(json) {
   return m
 }
 
-export async function buildAll (upstreamDir, outDir) {
+export function resolveRefDir (configured) {
+  return path.resolve(process.env.LIMBUS_REF_DIR || configured || path.join(os.homedir(), 'Documents', 'deepseek-harness', 'default-workspace', 'limbus-ref'))
+}
+
+export function skillDescription (record) {
+  const levels = [...(record.levelList || [])].sort((a, b) => (b.level || 0) - (a.level || 0))
+  const text = levels[0] || record
+  return { name: text.name || '', desc: [text.desc || '', ...(text.coinlist || []).flatMap(c => (c.coindescs || []).map(d => d.desc || ''))].filter(Boolean).join('\n') }
+}
+
+export function publishSnapshot (outDir, payload) {
+  const parent = path.dirname(path.resolve(outDir))
+  fs.mkdirSync(parent, { recursive: true })
+  for (const name of ['personalities', 'egos', 'enemies', 'egogifts']) {
+    const rows = payload[name]
+    if (!Array.isArray(rows) || !rows.length) throw new Error(`${name} 为空，保留旧数据`)
+    if (new Set(rows.map(r => r.id)).size !== rows.length || rows.some(r => !Number.isSafeInteger(r.id) || r.id < 0)) throw new Error(`${name} ID 无效或重复`)
+    const old = readJson(path.join(outDir, name + '.json'))
+    if (old?.length && rows.length < old.length * .9) throw new Error(`${name} 记录数量异常减少，保留旧数据`)
+  }
+  if (!Object.keys(payload.skills || {}).length || !Object.keys(payload.passives || {}).length) throw new Error('技能或被动文本为空，保留旧数据')
+  const stage = fs.mkdtempSync(path.join(parent, '.limbus-stage-'))
+  const backup = stage + '-previous'
+  let moved = false
+  try {
+    if (fs.existsSync(outDir)) fs.cpSync(outDir, stage, { recursive: true })
+    for (const [name, value] of Object.entries(payload)) fs.writeFileSync(path.join(stage, name + '.json'), JSON.stringify(value))
+    if (fs.existsSync(outDir)) { fs.renameSync(outDir, backup); moved = true }
+    try { fs.renameSync(stage, outDir) } catch (error) { if (moved) fs.renameSync(backup, outDir); throw error }
+    if (moved) fs.rmSync(backup, { recursive: true, force: true })
+  } finally { if (fs.existsSync(stage)) fs.rmSync(stage, { recursive: true, force: true }) }
+}
+
+export function mergeLocalTexts (payload, refDir) {
+  const cn = path.join(refDir, 'CN')
+  for (const file of listDir(cn).filter(f => /^Skills.*\.json$/i.test(f)).sort()) {
+    for (const record of list(readJson(path.join(cn, file)))) {
+      const incoming = skillDescription(record)
+      const old = payload.skills[record.id] || {}
+      payload.skills[record.id] = { ...old, name: incoming.name || old.name || '', desc: incoming.desc || old.desc || '' }
+    }
+  }
+  for (const record of list(readJson(path.join(cn, 'Passives.json')))) {
+    const old = payload.passives[record.id] || {}
+    payload.passives[record.id] = { ...old, name: record.name || old.name || '', desc: record.desc || old.desc || '' }
+  }
+}
+
+export async function buildAll (upstreamDir, outDir, options = {}) {
   const SD = path.join(upstreamDir, 'LimbusStaticData', 'StaticData', 'static-data')
   const CN = path.join(upstreamDir, 'LocalizeLimbusCompany', 'LLC_zh-CN')
+  const refDir = resolveRefDir(options.localRefDir)
 
-  if (!fs.existsSync(SD)) throw new Error(`LimbusStaticData 未找到: ${SD}`)
-  if (!fs.existsSync(CN)) throw new Error(`LocalizeLimbusCompany 未找到: ${CN}`)
+  if (!fs.existsSync(SD) || !fs.existsSync(CN)) {
+    const payload = Object.fromEntries(['personalities', 'egos', 'enemies', 'egogifts', 'skills', 'passives', 'meta'].map(name => [name, readJson(path.join(outDir, name + '.json'))]))
+    if (!payload.skills || !payload.passives) throw new Error('缺少本地数据快照；请先配置本地上游数据')
+    // EGOgift category tables contain status keys rather than actual gift IDs.
+    if (Array.isArray(payload.egogifts)) payload.egogifts = payload.egogifts.filter(row => Number.isSafeInteger(row.id) && row.id >= 0)
+    mergeLocalTexts(payload, refDir)
+    // Keep the original source date: a local rebuild is not a fresh upstream release.
+    payload.meta = { ...payload.meta, rebuiltAt: new Date().toISOString() }
+    publishSnapshot(outDir, payload)
+    return { ...Object.fromEntries(['personalities', 'egos', 'enemies', 'egogifts'].map(n => [n, payload[n].length])), diag: ['使用本地快照；未联网更新'], local: true }
+  }
 
   // ===== 文本表 =====
   const tPers = list(readJson(path.join(CN, 'Personalities.json')))
@@ -290,7 +350,7 @@ export async function buildAll (upstreamDir, outDir) {
   // 倒序合并：数值主表 _7/_2 等赛季后缀表优先覆盖（同 id 升级变体靠后）
   for (const f of giftFiles.sort()) {
     for (const g of list(readJson(path.join(CN, f)))) {
-      if (g.id != null) giftMap.set(g.id, g)
+      if (Number.isSafeInteger(g.id) && g.id >= 0) giftMap.set(g.id, g)
     }
   }
   // 饰品稀有度：自动发现饰品数据目录（ego-gift-mirrordungeon / ego-gift 等，上游改名也能扫到），
@@ -338,8 +398,7 @@ export async function buildAll (upstreamDir, outDir) {
     const json = readJson(path.join(CN, f))
     if (!json) continue
     for (const t of list(json)) {
-      if (skills[t.id]) continue // 先到先得（通用表优先）
-      const lv1 = (t.levelList || [])[0] || {}
+      const lv1 = [...(t.levelList || [])].sort((a, b) => (b.level || 0) - (a.level || 0))[0] || {}
       const name = lv1.name || ''
       let desc = lv1.desc || ''
       // Limbus 技能文本 = 主 desc + 硬币 coinlist[].coindescs[].desc
@@ -365,9 +424,6 @@ export async function buildAll (upstreamDir, outDir) {
   }
 
   // ===== 输出 =====
-  fs.mkdirSync(outDir, { recursive: true })
-  const out = (name, data) =>
-    fs.writeFileSync(path.join(outDir, `${name}.json`), JSON.stringify(data))
   // 合并补充人格（数据源未收录的赛季8高级定制等，由 supplement.json 维护）
   const supplementPath = path.join(outDir, 'supplement.json')
   const supplement = readJson(supplementPath)
@@ -378,13 +434,9 @@ export async function buildAll (upstreamDir, outDir) {
     }
     personalities.sort((a, b) => a.id - b.id)
   }
-  out('personalities', personalities)
-  out('egos', egos)
-  out('enemies', enemies)
-  out('egogifts', egogifts)
-  out('skills', skills)
-  out('passives', passives)
-  out('meta', { builtAt: new Date().toISOString(), sourceVersion: new Date().toISOString().slice(0, 10) })
+  const payload = { personalities, egos, enemies, egogifts, skills, passives, meta: { builtAt: new Date().toISOString(), sourceVersion: 'local-upstream' } }
+  mergeLocalTexts(payload, refDir)
+  publishSnapshot(outDir, payload)
 
   // ===== 数据完整性诊断（便于一眼看出哪些上游数据缺失）=====
   const diag = []
@@ -412,9 +464,9 @@ export async function buildAll (upstreamDir, outDir) {
 // 直接运行
 if (process.argv[1] && process.argv[1].endsWith('build_data.mjs')) {
   const upstream = process.argv[2] || path.join(PLUGIN_ROOT, 'data', 'upstream')
-  buildAll(upstream, path.join(PLUGIN_ROOT, 'resources', 'data'))
+  buildAll(upstream, process.argv[3] || path.join(PLUGIN_ROOT, 'resources', 'data'))
     .then(r => {
-      console.log('build done:', r)
+      console.log(JSON.stringify(r))
     })
     .catch(e => {
       console.error('build failed:', e.message)

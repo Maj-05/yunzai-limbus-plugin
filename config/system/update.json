@@ -11,5 +11,9 @@
   },
   "tip": "配好 ghMirror 后执行 #limbus更新，会重新拉取 LocalizeLimbusCompany 中文文本源并重建数据，即可补齐显示为 技能{id} 等缺失的技能/被动描述。",
   "artMirror": "",
-  "artNote": "立绘图床前缀。若服务器无法直连 huiji-public.huijistatic.com(国内常见)，可填可访问的镜像/CDN(以 https:// 开头)，如 https://你的镜像/ 或留空用默认图床。"
+  "artNote": "立绘图床前缀。若服务器无法直连 huiji-public.huijistatic.com(国内常见)，可填可访问的镜像/CDN(以 https:// 开头)，如 https://你的镜像/ 或留空用默认图床。",
+  "allowNetworkUpdates": false,
+  "downloadArt": false,
+  "localRefDir": "",
+  "localDataNote": "默认离线；可设置 LIMBUS_REF_DIR 环境变量或 localRefDir 指向本地 limbus-ref。allowNetworkUpdates=true 才允许拉取远程代码/数据，downloadArt=true 才下载图片。"
 }

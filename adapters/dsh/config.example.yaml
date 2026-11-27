@@ -1,0 +1,9 @@
+# Replace the path with the real checkout or extracted limbus-mcp package path.
+- id: limbus-offline
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    serverName: limbus
+    transport: stdio
+    command: node
+    args: ['/absolute/path/to/limbus/adapters/dsh/server.mjs']
+    toolCallTimeoutMs: 15000

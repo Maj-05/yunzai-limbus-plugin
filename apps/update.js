@@ -2,11 +2,11 @@ import { rulePrefix } from '../utils/common.js'
 import db from '../lib/db.mjs'
 import { checkDataAge } from '../lib/version_check.mjs'
 import { PLUGIN_ROOT } from '../lib/constants.mjs'
-import { exec } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import fs from 'node:fs'
 import path from 'node:path'
-const execAsync = promisify(exec)
+const execAsync = promisify(execFile)
 
 /**
  * 数据更新 + 插件自更新
@@ -48,21 +48,24 @@ function getUpstreams () {
   })
 }
 
-/** 可选通用 git 代理（config/system/update.json 的 httpProxy，如 http://127.0.0.1:26561）。
- *  拉取上游时带上，让国内服务器也能拉 git.neonteam.dev / github.com 的上游数据。
- *  返回 git 的 -c 参数数组（未配置则空数组）。 */
-function gitProxyArgs () {
-  const cfg = loadUpdateConfig()
+export function gitProxyArgs (cfg = loadUpdateConfig()) {
+  const args = ['-c', 'http.sslVerify=true', '-c', 'http.lowSpeedLimit=1000', '-c', 'http.lowSpeedTime=60']
   const proxy = (cfg.httpProxy || '').trim()
-  if (!proxy) return []
-  return [
-    '-c', 'http.proxy=' + proxy,
-    '-c', 'http.sslBackend=openssl',
-    '-c', 'http.sslVerify=false',
-    '-c', 'http.lowSpeedLimit=1000',
-    '-c', 'http.lowSpeedTime=600'
-  ]
+  if (proxy) {
+    const parsed = new URL(proxy)
+    if (!['http:', 'https:', 'socks5:', 'socks5h:'].includes(parsed.protocol)) throw new Error('不支持的代理协议')
+    args.push('-c', 'http.proxy=' + proxy)
+  }
+  return args
 }
+
+export function validateGitUrl (value) {
+  const url = new URL(value)
+  if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Git 源必须使用无凭据的 HTTPS URL')
+  return url.href
+}
+
+let updating = false
 
 export class LimbusUpdate extends plugin {
   constructor() {
@@ -142,138 +145,61 @@ export class LimbusUpdate extends plugin {
     return fs.existsSync(path.join(PLUGIN_ROOT, '.git'))
   }
 
-  async update(e) {
-    if (this._running) {
-      await this.reply('更新任务进行中，请稍候')
-      return true
-    }
-    this._running = true
+  async update() {
+    if (!this.e?.isMaster) return false
+    if (updating) { await this.reply('更新任务进行中，请稍候'); return true }
+    updating = true
+    const cfg = loadUpdateConfig()
     const onlyData = this.e.msg.includes('数据')
+    const online = cfg.allowNetworkUpdates === true
     try {
-      // ============ 阶段1：插件自更新（git pull，仅更新本插件目录，失败不覆盖）============
-      if (!onlyData) {
-        await this.reply('①/② 正在拉取插件最新代码…')
-        let updated = false
-        // 安全护栏：确认 PLUGIN_ROOT 确实是插件自身目录（含 apps/ 与 package.json），
-        // 避免 PLUGIN_ROOT 解析偏差时对 Yunzai 插件根等父目录误执行 git/覆盖。
-        const isPluginRoot = fs.existsSync(path.join(PLUGIN_ROOT, 'apps')) && fs.existsSync(path.join(PLUGIN_ROOT, 'package.json'))
-        if (!isPluginRoot) {
-          await this.reply(`⚠ 插件目录校验失败（PLUGIN_ROOT=${PLUGIN_ROOT}），已中止插件自更新，仅执行数据更新。`)
-        } else if (this._isGitRepo()) {
-          const isForce = this.e.msg.includes('强制')
-          const oldCommit = await this._execGit('rev-parse --short HEAD')
-          let cmd = isForce
-            ? 'git -C "' + PLUGIN_ROOT + '" fetch --all && git -C "' + PLUGIN_ROOT + '" reset --hard @{upstream}'
-            : 'git -C "' + PLUGIN_ROOT + '" pull --no-rebase'
-          let ret = await execAsync(cmd, { timeout: 180000, windowsHide: true }).catch(err => ({ stdout: '', stderr: err.message }))
-          // 直连失败则走 ghMirror 代理重试
-          if (/Failed to connect|unable to access|Timed out|Could not|fatal/i.test(ret.stdout || '') + String(ret.stderr || '')) {
-            const mir = ghMirrorOf(REPO_URL)
-            await this.reply('直连 GitHub 失败，改用代理镜像重试…')
-            ret = await execAsync(`git -C "${PLUGIN_ROOT}" pull --no-rebase "${mir}" HEAD`, { timeout: 180000, windowsHide: true })
-              .catch(err => ({ stdout: '', stderr: err.message }))
-          }
-          const stdout = (ret.stdout || '') + (ret.stderr || '')
-          if (/Already up.to date|已经是最新/i.test(stdout)) {
-            await this.reply('插件代码已是最新')
-            updated = true
-          } else if (/fatal|error|Could not|Failed to connect/i.test(stdout)) {
-            // 安全：git 更新失败不做全量覆盖（避免误覆盖插件或 Yunzai 目录），只提示用户
-            await this.reply(`插件 git 更新失败:\n${stdout.trim().slice(0, 300)}\n可执行「#limbus强制更新」或改用 Yunzai 的「更新插件」功能。`)
-          } else {
-            await this.reply(`代码已更新（${isForce ? '强制' : '常规'}）\n${stdout.trim().split('\n').slice(-6).join('\n').slice(0, 400)}`)
-            const log = await this._gitLog(oldCommit)
-            if (log) await this.reply(log.slice(0, 600))
-            updated = true
-          }
-        } else {
-          // 第三方面板安装（无 .git）：不自更新，提示走 Yunzai 更新机制
-          updated = false
-          await this.reply('插件目录不是 git 仓库，无法自更新。\n请改用 Yunzai 的「更新插件」功能，或重新安装插件。')
+      if (online && !onlyData && this._isGitRepo()) {
+        await this.reply('正在更新插件代码…')
+        const git = args => this._execGit(args, PLUGIN_ROOT, cfg)
+        try {
+          if (this.e.msg.includes('强制')) {
+            await git(['fetch', '--all'])
+            await git(['reset', '--hard', '@{upstream}'])
+          } else await git(['pull', '--ff-only'])
+        } catch (error) {
+          const mirror = ghMirrorOf(REPO_URL)
+          if (mirror === REPO_URL || !/unable to access|failed to connect|timed? out|could not resolve/i.test(String(error.stderr || error.message))) throw error
+          await git(['pull', '--ff-only', validateGitUrl(mirror), 'HEAD'])
         }
-        if (!updated) {
-          // 插件代码未更新（网络/git/非仓库），提示用户，不影响下方数据更新
-          await this.reply('插件代码自更新未完成（网络或 git 问题），可改用 Yunzai 的「更新插件」功能。\n不影响下方数据更新。')
-        }
-      } else {
-        await this.reply('①/② 跳过插件自更新（仅更新数据）')
       }
-
-      // ============ 阶段2：拉上游数据 ============
       const upstreamDir = path.join(PLUGIN_ROOT, 'data', 'upstream')
-      fs.mkdirSync(upstreamDir, { recursive: true })
-      await this.reply('②/② 正在拉取上游数据源（1-3 分钟）…')
-      const gargs = gitProxyArgs() // 可选代理 -c 参数（未配置 httpProxy 为空数组）
-      const gpre = gargs.length ? gargs.join(' ') + ' ' : ''
-      for (const u of getUpstreams()) {
-        const dest = path.join(upstreamDir, u.name)
-        try {
-          if (fs.existsSync(path.join(dest, '.git'))) {
-            await execAsync(`git ${gpre}pull --ff-only`, { cwd: dest, timeout: 180000, windowsHide: true })
-          } else {
-            fs.rmSync(dest, { recursive: true, force: true })
-            await execAsync(`git ${gpre}clone --depth 1 ${u.url} "${dest}"`, { timeout: 600000, windowsHide: true })
-          }
-        } catch (e) {
-          // 单个源失败不中断整个更新（如国内服务器连不上 GitHub）
-          logger.error(`[limbus-plugin] 拉取源失败 ${u.name}: ${e.message}`)
-          await this.reply(`⚠ 拉取源 ${u.name} 失败（${e.message.slice(0, 40)}），已跳过。\n若该源已有本地缓存会继续用旧数据。`)
+      if (online) {
+        fs.mkdirSync(upstreamDir, { recursive: true })
+        for (const upstream of getUpstreams()) {
+          const dest = path.join(upstreamDir, upstream.name)
+          const url = validateGitUrl(upstream.url)
+          if (fs.existsSync(path.join(dest, '.git'))) await this._execGit(['pull', '--ff-only'], dest, cfg)
+          else if (!fs.existsSync(dest)) await this._execGit(['clone', '--depth', '1', '--', url, dest], upstreamDir, cfg)
+          else throw new Error('本地上游目录存在但不是 Git 仓库，已保留文件：' + upstream.name)
         }
       }
-
-      // ============ 阶段3：重建数据 ============
-      const { buildAll } = await import('../scripts/build_data.mjs')
-      const result = await buildAll(upstreamDir, path.join(PLUGIN_ROOT, 'resources', 'data'))
+      const args = [path.join(PLUGIN_ROOT, 'scripts', 'build_data.mjs'), upstreamDir, path.join(PLUGIN_ROOT, 'resources', 'data')]
+      const env = { ...process.env }
+      if (!env.LIMBUS_REF_DIR && cfg.localRefDir) env.LIMBUS_REF_DIR = cfg.localRefDir
+      const built = await execAsync(process.execPath, args, { env, cwd: PLUGIN_ROOT, timeout: 180000, maxBuffer: 1024 * 1024, windowsHide: true })
+      const result = JSON.parse(built.stdout.trim())
       db.ready = false
-      db.load()
-
-      // ============ 阶段4：拉取立绘（本地缓存，缺失才热链） ============
+      if (!db.load()) throw new Error('更新后的数据无法载入')
       let artLine = ''
-      if (!onlyData) {
-        try {
-          await this.reply('正在拉取人格+E.G.O 立绘（首次约几分钟，之后增量）…')
-          const { build: buildArt } = await import('../scripts/fetch_art.mjs')
-          const art = await buildArt()
-          artLine = `\n立绘: 需下载 ${art.need} / 已下载 ${art.downloaded} / 已有 ${art.existed} / 失败 ${art.failed}` +
-            (art.failed > 0 ? '\n立绘失败较多：多为服务器无法访问图床 huijistatic.com，可配代理；缺失立绘会自动回退在线热链（不影响文字查询）' : '')
-        } catch (e) {
-          logger.error(`[limbus-plugin] 立绘拉取失败: ${e.message}`)
-          artLine = '\n立绘: 拉取失败（不影响文字查询）'
-        }
+      if (online && !onlyData && cfg.downloadArt === true) {
+        await execAsync(process.execPath, [path.join(PLUGIN_ROOT, 'scripts', 'fetch_art.mjs'), '--allow-network'], { cwd: PLUGIN_ROOT, timeout: 600000, maxBuffer: 1024 * 1024, windowsHide: true })
+        artLine = '\n立绘缓存更新完成'
       }
-
-      await this.reply(
-        `边狱图鉴更新完成 ✓\n人格: ${result.personalities}\nE.G.O: ${result.egos}\n敌人: ${result.enemies}\n饰品: ${result.egogifts}` +
-        artLine +
-        (result.diag && result.diag.length ? `\n\n⚠ 数据完整性提示：\n${result.diag.map(d => '· ' + d).join('\n')}` : '')
-      )
-    } catch (err) {
-      logger.error(`[limbus-plugin] 更新失败: ${err.stack || err.message}`)
-      await this.reply(`更新失败: ${err.message}\n常见原因: 服务器无法访问 git.neonteam.dev / github.com（国内服务器建议配置代理）`)
-    } finally {
-      this._running = false
-    }
+      await this.reply(`图鉴本地数据更新完成\n人格: ${result.personalities} · E.G.O: ${result.egos} · 敌人: ${result.enemies} · 饰品: ${result.egogifts}` + artLine + (!online ? '\n离线模式：未访问网络。' : ''))
+    } catch (error) {
+      globalThis.logger?.error('[limbus-plugin] 更新失败: ' + error.message)
+      await this.reply('更新失败，已停止：' + error.message)
+    } finally { updating = false }
     return true
   }
 
-  _execGit (args) {
-    return execAsync(`git -C "${PLUGIN_ROOT}" ${args}`, { timeout: 60000, windowsHide: true })
-      .then(r => (r.stdout || '').trim()).catch(() => '')
-  }
-
-  _gitLog (oldCommit) {
-    return this._execGit('log -15 --oneline --pretty=format:"%h|[%cd] %s" --date=format:"%m-%d %H:%M"')
-      .then(out => {
-        if (!out) return ''
-        const lines = out.split('\n')
-        const logs = []
-        for (const l of lines) {
-          const h = (l.split('|')[0] || '').trim()
-          if (h && oldCommit && h === oldCommit) break
-          if (/Merge branch/.test(l)) continue
-          logs.push(l)
-        }
-        return logs.length ? `最近更新:\n${logs.join('\n')}` : ''
-      }).catch(() => '')
+  _execGit(args, cwd = PLUGIN_ROOT, cfg = loadUpdateConfig()) {
+    return execAsync('git', [...gitProxyArgs(cfg), ...args], { cwd, timeout: 180000, maxBuffer: 1024 * 1024, windowsHide: true })
+      .then(result => result.stdout.trim())
   }
 }

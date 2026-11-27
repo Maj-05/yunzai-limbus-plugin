@@ -3,8 +3,10 @@ import runtimeRender from '../utils/runtimeRender.js'
 import db from '../lib/db.mjs'
 import { buildPersonalityCard, buildEgoCard, buildEnemyCard, artUrl } from '../lib/cards.mjs'
 import { readData, SINNER_NAMES } from '../lib/constants.mjs'
-import { rememberSelect } from '../lib/selection.mjs'
-import { buildGalleryAll, buildGallerySinner, buildGalleryRandom } from '../lib/gallery.mjs'
+import { rememberSelect, clearSelect, selectionKey } from '../lib/selection.mjs'
+import { buildGalleryPage, buildGalleryRandom } from '../lib/gallery.mjs'
+
+let poolCache = null
 
 /**
  * 工具类命令：状态速查 / 随机查询 / 罪人总览
@@ -19,26 +21,26 @@ export class LimbusTool extends plugin {
       rule: [
         { reg: `^${rulePrefix}(?:状态|机制|效果)\\s*(.+)$`, fnc: 'queryStatus' },
         { reg: `^${rulePrefix}(?:技能)\\s*(.+)$`, fnc: 'skillSearch' },
-        { reg: `^${rulePrefix}(?:抗性)\s*(.+)$`, fnc: 'resistQuery' },
+        { reg: `^${rulePrefix}(?:抗性)\\s*(.+)$`, fnc: 'resistQuery' },
         { reg: `^${rulePrefix}随机(?:人格|身份)\\s*$`, fnc: 'randomPersonality' },
         { reg: `^${rulePrefix}随机(?:ego|EGO)\\s*$`, fnc: 'randomEgo' },
-        { reg: `^${rulePrefix}(?:罪人总览|罪人)\s*(.*)$`, fnc: 'sinnerOverview' },
+        { reg: `^${rulePrefix}(?:罪人总览|罪人)\\s*(.*)$`, fnc: 'sinnerOverview' },
         { reg: `^${rulePrefix}(?:流派)\\s*(.*)$`, fnc: 'flowInfo' },
         { reg: `^${rulePrefix}(?:配队|队伍)\\s*(.*)$`, fnc: 'teamInfo' },
         { reg: `^${rulePrefix}(?:抽卡预算|预算)\\s*(.*)$`, fnc: 'gachaBudget' },
         { reg: `^${rulePrefix}(?:探索事件|事件)\\s*(.*)$`, fnc: 'exploreEvent' },
-        { reg: `^${rulePrefix}(?:图鉴)\s*(.*)$`, fnc: 'catalogBrowse' },
-        { reg: `^${rulePrefix}(?:ego图鉴|EGO图鉴)\s*(.*)$`, fnc: 'catalogEgo' },
-        { reg: `^${rulePrefix}(?:敌图鉴)\s*(.*)$`, fnc: 'catalogEnemy' },
-        { reg: `^${rulePrefix}(?:画廊)\s*(.*)$`, fnc: 'gallery' },
+        { reg: `^${rulePrefix}(?:图鉴)\\s*(.*)$`, fnc: 'catalogBrowse' },
+        { reg: `^${rulePrefix}(?:ego图鉴|EGO图鉴)\\s*(.*)$`, fnc: 'catalogEgo' },
+        { reg: `^${rulePrefix}(?:敌图鉴)\\s*(.*)$`, fnc: 'catalogEnemy' },
+        { reg: `^${rulePrefix}(?:画廊)\\s*(.*)$`, fnc: 'gallery' },
         { reg: `^${rulePrefix}抽卡(?:\\s+(.*))?$`, fnc: 'gacha' }
       ]
     })
   }
 
   _stripKw(msg, kw) {
-    let q = msg.replace(/#|\/|边狱|巴士|084|limbus|Limbus/gi, '').trim()
-    q = q.replace(new RegExp(`^${kw}\\s*`, 'i'), '').trim()
+    let q = msg.replace(new RegExp(`^${rulePrefix}`, 'i'), '').trim()
+    q = q.replace(new RegExp(`^(?:${kw})\\s*`, 'i'), '').trim()
     return q
   }
 
@@ -151,18 +153,26 @@ export class LimbusTool extends plugin {
     if (!db.load()) { await this.reply('图鉴数据未就绪'); return true }
     const q = this._stripKw(this.e.msg, '画廊').trim()
     let data
+    let ids
+    let kindName = '全部人格立绘'
     if (/^随机$/i.test(q)) {
       data = buildGalleryRandom()
       if (!data) { await this.reply('人格数据为空'); return true }
     } else if (q) {
       const cid = db.resolveSinner(q)
       if (!cid) { await this.reply(`没有「${q}」这个罪人。\n用法：#画廊 或 #画廊 <罪人名> 或 #画廊 随机`); return true }
-      data = buildGallerySinner(cid)
+      ids = db.personalitiesOfSinner(cid).map(p => p.id)
+      kindName = `${SINNER_NAMES[cid]}的人格立绘`
     } else {
-      data = buildGalleryAll()
+      ids = db.personalities.map(p => p.id).sort((a, b) => a - b)
     }
+    if (ids) {
+      data = buildGalleryPage(ids, 0, kindName)
+      rememberSelect(selectionKey(this.e), { ids, kindName, mode: 'gallery', pageSize: 12 })
+    } else clearSelect(selectionKey(this.e))
     if (!data || !data.groups.length || data.total === 0) { await this.reply('画廊暂无数据'); return true }
     await runtimeRender(this.e, 'gallery/gallery', data, { scale: 1.3 })
+    if (ids?.length > 12) await this.reply(`画廊第 1/${Math.ceil(ids.length / 12)} 页 · 下一页/上一页/第N页`)
     return true
   }
 
@@ -379,8 +389,8 @@ export class LimbusTool extends plugin {
     const shown = ids.slice(0, PAGE)
     // 文本型 selection：预生成每页 id→行文本 映射，翻页(turnPage)也走文本保持一致
     const textNames = {}
-    for (const id of ids) textNames[id] = label(id, ids.indexOf(id)).replace(/^\d+\.\s*/, '')
-    rememberSelect(this.e.user_id, { ids, kindName, render, tpl, page, pageSize: PAGE, textNames })
+    ids.forEach((id, i) => { textNames[id] = label(id, i).replace(/^\d+\.\s*/, '') })
+    rememberSelect(selectionKey(this.e), { ids, kindName, render, tpl, page, pageSize: PAGE, textNames })
     const lines = shown.map((id, i) => `${i + 1}. ${textNames[id]}`)
     const more = ids.length > PAGE ? `\n…等 ${ids.length} 个 · 回复 下一页/上一页/第N页 翻页，序号查看详情` : ''
     await this.reply(`【${title}】第 ${page + 1}/${totalPages} 页\n` + lines.join('\n') + more)
@@ -485,7 +495,7 @@ export class LimbusTool extends plugin {
     const q = this._stripKw(this.e.msg, '探索事件|事件').trim()
     const events = readEventData()
     if (!events || !events.length) { await this.reply('探索事件数据未就绪'); return true }
-    if (!q || /^(随机|全部|列表|分组)$/i.test(q)) {
+    if (!q || /^(全部|列表|分组)$/i.test(q)) {
       // 按 stage 分组展示（基础 / 活动卡包 / 主线），便于浏览
       const order = ['基础', '活动卡包', '主线']
       const groups = {}
@@ -533,33 +543,47 @@ export class LimbusTool extends plugin {
     // rarity: 数值越小越稀有（1=3灯人格, 2=WAW, 3=2灯/HE, 4=TETH, 5=1灯/ZAYIN）
     const roll = Math.random() * 100
     if (roll < 1.7) { // 人格 3灯（最稀有）
-      const pool = db.personalities.filter(p => (p.rank ?? 0) >= 3)
+      const pool = this._gachaPools().rank3
       return this._pick(pool, 'personality', 1, depth)
     } else if (roll < 13.7) { // 人格 2灯
-      const pool = db.personalities.filter(p => (p.rank ?? 0) === 2)
+      const pool = this._gachaPools().rank2
       return this._pick(pool, 'personality', 3, depth)
     } else if (roll < 93) { // 人格碎片（1灯初始人格不可抽，全部为碎片；碎片只分该罪人人格碎片，不出十连券碎片）
       const shardNames = ['李箱', '浮士德', '堂吉诃德', '良秀', '默尔索', '鸿璐', '希斯克利夫', '以实玛利', '罗佳', '辛克莱', '奥提斯', '格里高尔']
       const si = Math.floor(Math.random() * shardNames.length)
       return { kind: 'shard', id: 0, name: `${shardNames[si]}·人格碎片 ×${1 + Math.floor(Math.random() * 15)}`, rank: 0, rarity: 5, shardCharId: si + 1 }
     } else if (roll < 93.3) { // EGO WAW
-      const pool = db.egos.filter(g => g.grade === 'WAW')
+      const pool = this._gachaPools().WAW
       return this._pick(pool, 'ego', 2, depth)
     } else if (roll < 94.3) { // EGO HE
-      const pool = db.egos.filter(g => g.grade === 'HE')
+      const pool = this._gachaPools().HE
       return this._pick(pool, 'ego', 3, depth)
     } else if (roll < 97.3) { // EGO TETH
-      const pool = db.egos.filter(g => g.grade === 'TETH')
+      const pool = this._gachaPools().TETH
       return this._pick(pool, 'ego', 4, depth)
     } else { // EGO ZAYIN（排除初始）
-      const pool = db.egos.filter(g => g.grade === 'ZAYIN' && !this._isInitialEgo(g.id))
+      const pool = this._gachaPools().ZAYIN
       return this._pick(pool, 'ego', 5, depth)
     }
   }
 
   /** 判断是否罪人初始ZAYIN EGO(20X01, 开局自带不可抽) */
   _isInitialEgo(id) {
-    return /^20\d01$/.test(String(id))
+    return /^2(?:0[1-9]|1[0-2])01$/.test(String(id))
+  }
+
+  _gachaPools() {
+    if (poolCache?.personalities === db.personalities && poolCache?.egos === db.egos) return poolCache
+    const pools = { personalities: db.personalities, egos: db.egos, rank3: [], rank2: [], WAW: [], HE: [], TETH: [], ZAYIN: [] }
+    for (const p of db.personalities) {
+      if (p.rank >= 3) pools.rank3.push(p)
+      else if (p.rank === 2) pools.rank2.push(p)
+    }
+    for (const g of db.egos) {
+      if (['WAW', 'HE', 'TETH', 'ZAYIN'].includes(g.grade) && !this._isInitialEgo(g.id)) pools[g.grade].push(g)
+    }
+    poolCache = pools
+    return pools
   }
 
   _pick(pool, kind, rarity, depth = 0) {

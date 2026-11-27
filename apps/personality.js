@@ -2,7 +2,7 @@ import { rulePrefix } from '../utils/common.js'
 import runtimeRender from '../utils/runtimeRender.js'
 import db from '../lib/db.mjs'
 import { buildPersonalityCard, buildSinnerPersonalityList, suggestions } from '../lib/cards.mjs'
-import { rememberSelect, peekSelect, clearSelect } from '../lib/selection.mjs'
+import { rememberSelect, peekSelect, clearSelect, selectionKey } from '../lib/selection.mjs'
 
 export class LimbusQuery extends plugin {
   constructor() {
@@ -12,15 +12,15 @@ export class LimbusQuery extends plugin {
       event: 'message',
       priority: 500,
       rule: [
-        { reg: `^${rulePrefix}人格对比\s*(.*)$`, fnc: 'comparePersonality' },
-        { reg: `^${rulePrefix}(?:人格|身份)\s*(.+)$`, fnc: 'queryPersonality' },
+        { reg: `^${rulePrefix}人格对比\\s*(.*)$`, fnc: 'comparePersonality' },
+        { reg: `^${rulePrefix}(?:人格|身份)\\s*(.+)$`, fnc: 'queryPersonality' },
         { reg: '^#?[1-8]$', fnc: 'selectNumber' }
       ]
     })
   }
 
   async queryPersonality() {
-    const q = this.e.msg.replace(/#|\/|边狱|巴士|084|limbus|Limbus|人格|身份/g, '').trim()
+    let q = this.e.msg.replace(new RegExp(`^${rulePrefix}(?:人格|身份)\\s*`, 'i'), '').trim()
     if (!q || q === '帮助') return false  // 帮助交给 help.js
     if (!db.load()) {
       await this.reply('图鉴数据未就绪，请联系管理员运行数据构建')
@@ -32,10 +32,10 @@ export class LimbusQuery extends plugin {
     // 尾部「N灯」→ 稀有度；否则尾部「赛季N」或「N」→ 赛季
     const lanternM = q.match(/(?:赛季)?\s*(\d{1,4})\s*灯\s*$/)
     const seasonM = q.match(/(?:赛季)?\s*(\d{1,4})\s*$/)
-    if (lanternM) {
+    if (lanternM && db.resolveSinner(q.slice(0, lanternM.index).trim())) {
       rank = Number(lanternM[1])
       q = q.slice(0, q.length - lanternM[0].length).trim()
-    } else if (seasonM) {
+    } else if (seasonM && db.resolveSinner(q.slice(0, seasonM.index).trim())) {
       season = Number(seasonM[1])
       q = q.slice(0, q.length - seasonM[0].length).trim()
     }
@@ -60,7 +60,7 @@ export class LimbusQuery extends plugin {
       const isExact = first && first.name && first.name.replace(/\s+/g, '') === q.replace(/\s+/g, '')
       if (!isExact) {
         const list = suggestions(ids, 'personality')
-        rememberSelect(this.e.user_id, { ids, kindName: '人格', render: buildPersonalityCard, tpl: 'personality/personality' })
+        rememberSelect(selectionKey(this.e), { ids, kindName: '人格', render: buildPersonalityCard, tpl: 'personality/personality' })
         await runtimeRender(this.e, 'search/search', {
           kind: '人格',
           keyword: q,
@@ -81,7 +81,7 @@ export class LimbusQuery extends plugin {
   /** #人格对比 A B：图像版并排对比两张人格卡 */
   async comparePersonality() {
     if (!db.load()) { await this.reply('图鉴数据未就绪'); return true }
-    const raw = this.e.msg.replace(/#|\/|边狱|巴士|084|limbus|Limbus|人格|对比/g, '').trim()
+    const raw = this.e.msg.replace(new RegExp(`^${rulePrefix}人格对比\\s*`, 'i'), '').trim()
     const parts = raw.split(/[\s与和、,，]+/).map(x => x.trim()).filter(Boolean).slice(0, 2)
     if (parts.length < 2) { await this.reply('用法：#人格对比 目标A 目标B，例：#人格对比 良秀黑云会若众 良秀W公司3级清扫人员'); return true }
     const pair = []
@@ -100,16 +100,16 @@ export class LimbusQuery extends plugin {
     const q = this.e.msg.replace(/#/g, '').trim()
     const n = parseInt(q, 10)
     if (!Number.isInteger(n) || n < 1) return false
-    const sel = peekSelect(this.e.user_id)
-    if (!sel) return false
+    const sel = peekSelect(selectionKey(this.e))
+    if (!sel || sel.mode === 'gallery') return false
     if (!db.load()) return false
     const pageSize = sel.pageSize || sel.ids.length
     const offset = (sel.page || 0) * pageSize
     const id = sel.ids[offset + n - 1]
     if (id == null) { await this.reply('序号超出范围（1-' + Math.min(pageSize, sel.ids.length - offset) + '）'); return true }
     const card = sel.render(id)
-    if (!card) { await this.reply('数据缺失，请联系管理员更新图鉴'); clearSelect(this.e.user_id); return true }
-    clearSelect(this.e.user_id)
+    if (!card) { await this.reply('数据缺失，请联系管理员更新图鉴'); clearSelect(selectionKey(this.e)); return true }
+    clearSelect(selectionKey(this.e))
     await runtimeRender(this.e, sel.tpl, { card }, { scale: 1.4 })
     return true
   }

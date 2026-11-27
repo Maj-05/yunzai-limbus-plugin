@@ -1,0 +1,6 @@
+name: astrbot_plugin_limbus
+display_name: 边狱巴士离线图鉴
+desc: 人格、E.G.O、敌人、饰品离线查询。需要 Node.js 20+，安装构建后的完整 ZIP。
+version: v2.0.0
+author: Maj-05
+repo: https://github.com/Maj-05/yunzai-limbus-plugin

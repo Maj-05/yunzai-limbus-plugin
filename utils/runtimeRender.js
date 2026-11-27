@@ -2,14 +2,16 @@ import path from 'path'
 import { Version } from '../components/index.js'
 import { PLUGIN_ROOT } from '../lib/constants.mjs'
 
-const PLUGIN_Name = 'limbus-plugin'
+import { createRenderQueue } from '../lib/render_queue.mjs'
+const enqueue = createRenderQueue()
+const PLUGIN_Name = path.basename(PLUGIN_ROOT)
 
 /**
  * 渲染并回复图片（依赖 Yunzai 内置 puppeteer：e.runtime.render）
  */
-export default function runtimeRender (e, tplPath, renderData = {}, cfg = {}) {
+export default async function runtimeRender (e, tplPath, renderData = {}, cfg = {}) {
   if (!e.runtime || !e.runtime.render) {
-    logger.error('[limbus-plugin] 未找到 e.runtime.render，请升级至 TRSS/Miao-Yunzai 最新版')
+    globalThis.logger?.error('[limbus-plugin] 未找到 e.runtime.render，请升级至 TRSS/Miao-Yunzai 最新版')
     return e.reply('渲染失败：Bot 框架版本过低，请联系管理员升级')
   }
   const scale = (cfg.scale || 1) * 1
@@ -17,7 +19,7 @@ export default function runtimeRender (e, tplPath, renderData = {}, cfg = {}) {
   // 用插件真实根目录解析 layout，避免插件目录名与 PLUGIN_Name 不一致时找不到模板
   const layoutPath = path.join(PLUGIN_ROOT, 'resources', 'common', 'layout')
 
-  return e.runtime.render(PLUGIN_Name, tplPath, renderData, {
+  try { return await enqueue(() => e.runtime.render(PLUGIN_Name, tplPath, renderData, {
     ...cfg,
     beforeRender ({ data }) {
       return {
@@ -29,8 +31,11 @@ export default function runtimeRender (e, tplPath, renderData = {}, cfg = {}) {
           scale: pct,
           copyright: `Created By ${Version.name} & limbus-plugin v${Version.version}`
         },
-        quality: 100
+        quality: 85
       }
     }
-  })
+  })) } catch (error) {
+    globalThis.logger?.error('[limbus-plugin] render: ' + error.message)
+    return e.reply(error.message === 'RENDER_QUEUE_FULL' ? '图鉴图片正在排队，请稍后重试。' : '图片生成失败，请稍后重试或使用文字查询。')
+  }
 }

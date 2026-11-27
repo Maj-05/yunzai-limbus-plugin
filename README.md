@@ -1,5 +1,14 @@
 # limbus-plugin
 
+v2 提供共享本地查询核心、Yunzai 图鉴图片、DSH MCP 工具和 AstrBot 适配包。
+
+- 默认离线运行，优先本地参考数据，不自动拉取上游。
+- 新的纸质档案配色统一帮助、查询与卡片界面。
+- 昂贵截图统一排队，画廊分页，分页选择按会话隔离。
+- [DSH / AstrBot 安装与打包](docs/adapters.md)
+- 开发验证：Node.js 20+，`npm test` 和 `npm run check:data`。
+
+
 Yunzai (TRSS/Miao) 边狱巴士（Limbus Company）图鉴插件。
 
 ## 命令
@@ -48,8 +57,8 @@ Yunzai (TRSS/Miao) 边狱巴士（Limbus Company）图鉴插件。
 | #图鉴状态 | 数据统计 |
 | #limbus版本 | 版本号 |
 | #limbus更新记录 | 查看 CHANGELOG 更新日志 |
-| #limbus更新 | (master) 更新插件+数据+立绘 |
-| #limbus强制更新 | (master) 强制更新（放弃本地改动） |
+| #limbus更新 | (master) 本地数据刷新；联网更新需要显式配置 |
+| #limbus强制更新 | (master) 显式联网配置下的强制更新（放弃本地改动） |
 | #limbus更新数据 | (master) 仅重建数据 |
 
 > 命令均支持 #巴士 / #limbus / #084 前缀，如 #巴士人格 良秀。

@@ -1,0 +1,26 @@
+/* Shared archive theme. Screenshot output uses system fonts and local assets only. */
+:root { --ink:#272b31; --paper:#f3f0e8; --panel:#fffdf8; --gold:#896126; --edge:#d9d3c5; --secondary:#66655f; }
+body { color:var(--ink); background:var(--paper); line-height:1.65; }
+.container { padding:28px; background:linear-gradient(135deg,#f6f3eb,#eae5d9); border-top:7px solid var(--gold); }
+.head-box { padding:4px 0 15px; border-bottom:1px solid var(--edge); margin-bottom:20px; }
+.head-box .title,.gal-title { color:var(--ink); text-shadow:none; letter-spacing:.04em; }
+.head-box .label,.gal-label,.help-desc,.stat .k,.rid,.s-id,.gal-season { color:var(--secondary); }
+.card,.cont-box,.stat,.skill,.passive,.resist,.s-card { background:var(--panel); border-color:var(--edge); border-radius:8px; box-shadow:0 2px 5px #272b3108; }
+.card { padding:18px 20px; margin-bottom:16px; }
+.card-title,.help-group,.help-title,.gal-char,.stat .v { color:var(--gold); }
+.card-title,.skill,.passive { border-left-color:var(--gold); }
+.help-group { background:#eae3d4; }
+.help-table { background:var(--edge); }
+.help-table .td { background:var(--panel); padding:14px 18px; }
+.help-title { font-size:16px; }
+.row { padding:12px; border-color:var(--edge); }
+.idx { border-radius:6px; background:#eae3d4; color:var(--gold); }
+.name,.s-name,.gal-name,.skill-name { color:var(--ink); overflow-wrap:anywhere; }
+.skill-desc,.sd-line { line-height:1.85; overflow-wrap:anywhere; }
+.sd-coin { color:#654b23; border-left-color:#bd9d65; }
+.skill-nums { color:var(--secondary); }
+.art-banner,.gal-frame { background:#e6e0d4; border-color:var(--edge); border-radius:8px; }
+.art-img { max-height:580px; object-fit:contain; }
+.copyright { color:var(--secondary); border-top:1px solid var(--edge); padding-top:12px; }
+.badge,.s-badge { text-shadow:0 1px 2px #0008; }
+.skill-desc { white-space:normal; } .sd-line { white-space:pre-wrap; }
