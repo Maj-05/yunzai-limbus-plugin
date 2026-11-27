@@ -1,14 +1,5 @@
+/** 按资源实际格式缓存立绘（WebP 或 PNG），并生成 art_index.json。 */
 import { artLocal, normalPortraitUrl } from '../lib/cards.mjs'
-/**
- * 下载人格立绘到 resources/art/（本地缓存）。
- * 数据源：灰机wiki图床（文件名 = {人格id}_normal.png / {id}_gacksung.png）。
- * 规则：MediaWiki uploads/{md5[0]}/{md5[0..2]}/{fn}
- * 输出：resources/art/{id}_{kind}.png（原图缓存），并生成 art_index.json
- *
- * 说明：纯 Node 无 canvas 依赖，无法重编码成 JPEG，这里直接缓存原图 PNG，
- * 由 puppeteer 渲染时加载本地文件（避免每次在线热链原图 1~3MB 的延迟）。
- * 由 apps/update.js 的「拉取立绘」步骤调用。服务器需能访问 huijistatic.com。
- */
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'

@@ -84,7 +84,8 @@ cd plugins/limbus-plugin && pnpm i
 
 ## 更新与代理
 
-- `#limbus更新`：更新插件代码 + 拉上游数据 + 重建数据 + 拉立绘。
+- `#limbus更新` 默认使用本地数据。启用 `allowNetworkUpdates` 后会拉取代码和上游数据，同时启用 `downloadArt` 才会缓存立绘。
+- 人格卡优先读取 `resources/art` 中的立绘。缺图时使用[人格图鉴](https://yeon-sim.github.io/personality/)的普通立绘，也可通过 `artMirror` 指定兼容灰机路径的图床。
 - 服务器无法直连 github.com（国内常见）时，在 `config/system/update.json` 配置 `ghMirror` 走 GitHub 代理，例如：
   ```json
   { "ghMirror": "https://ghfast.top/" }
